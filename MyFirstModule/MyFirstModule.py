@@ -2,6 +2,7 @@ import logging
 import os
 from typing import Annotated
 
+
 import vtk
 
 import slicer
@@ -14,7 +15,7 @@ from slicer.parameterNodeWrapper import (
     WithinRange,
 )
 
-from slicer import vtkMRMLScalarVolumeNode
+from slicer import vtkMRMLScalarVolumeNode, vtkMRMLMarkupsFiducialNode
 
 
 #
@@ -30,11 +31,9 @@ class MyFirstModule(ScriptedLoadableModule):
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
         self.parent.title = _("Center of Mass")  # TODO: make this more human readable by adding spaces
-        # TODO: set categories (folders where the module shows up in the module selector)
         self.parent.categories = [translate("qSlicerAbstractCoreModule", "Examples")]
         self.parent.dependencies = []  # TODO: add here list of module names that this module requires
-        self.parent.contributors = ["JAlejandro"]  # TODO: replace with "Firstname Lastname (Organization)"
-        # TODO: update with short description of the module and a link to online module documentation
+        self.parent.contributors = ["Alejandro"]  # TODO: replace with "Firstname Lastname (Organization)"
         # _() function marks text as translatable to other languages
         self.parent.helpText = _("""
 This is an example of scripted loadable module bundled in an extension.
@@ -119,7 +118,7 @@ class MyFirstModuleParameterNode:
     invertedVolume - The output volume that will contain the inverted thresholded volume.
     """
 
-    inputVolume: vtkMRMLScalarVolumeNode
+    inputVolume: vtkMRMLMarkupsFiducialNode
     imageThreshold: Annotated[float, WithinRange(-100, 500)] = 100
     invertThreshold: bool = False
     thresholdedVolume: vtkMRMLScalarVolumeNode
@@ -158,6 +157,11 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
         # "setMRMLScene(vtkMRMLScene*)" slot.
         uiWidget.setMRMLScene(slicer.mrmlScene)
+        self.ui.inputSelector.nodeTypes = ["vtkMRMLMarkupsFiducialNode"]
+        self.ui.inputSelector.selectNodeUponCreation = True
+        self.ui.inputSelector.addEnabled = True
+        self.ui.inputSelector.removeEnabled = True
+        self.ui.inputSelector.noneEnabled = False
 
         # Create logic class. Logic implements all computations that should be possible to run
         # in batch mode, without a graphical user interface.
@@ -212,7 +216,7 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Select default input nodes if nothing is selected yet to save a few clicks for the user
         if not self._parameterNode.inputVolume:
-            firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
+            firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLMarkupsFiducialNode")
             if firstVolumeNode:
                 self._parameterNode.inputVolume = firstVolumeNode
 
@@ -234,11 +238,13 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self._checkCanApply()
 
     def _checkCanApply(self, caller=None, event=None) -> None:
-        if self._parameterNode and self._parameterNode.inputVolume and self._parameterNode.thresholdedVolume:
-            self.ui.applyButton.toolTip = _("Compute output volume")
+        inputPoints = self.ui.inputSelector.currentNode()
+
+        if inputPoints and inputPoints.GetNumberOfControlPoints() > 0:
+            self.ui.applyButton.toolTip = _("Compute center of mass")
             self.ui.applyButton.enabled = True
         else:
-            self.ui.applyButton.toolTip = _("Select input and output volume nodes")
+            self.ui.applyButton.toolTip = _("Select input points")
             self.ui.applyButton.enabled = False
 
     def onApplyButton(self) -> None:
@@ -253,16 +259,9 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # )
 
         with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
-            # Compute output
-            self.logic.process(self.ui.inputSelector.currentNode(), self.ui.outputSelector.currentNode(),
-                               self.ui.imageThresholdSliderWidget.value, self.ui.invertOutputCheckBox.checked)
-
-            # Compute inverted output (if needed)
-            if self.ui.invertedOutputSelector.currentNode():
-                # If additional output volume is selected then result with inverted threshold is written there
-                self.logic.process(self.ui.inputSelector.currentNode(), self.ui.invertedOutputSelector.currentNode(),
-                                   self.ui.imageThresholdSliderWidget.value, not self.ui.invertOutputCheckBox.checked, showResult=False)
-
+            centerOfMass = self.logic.getCenterOfMass(self.ui.inputSelector.currentNode())
+            logging.info(f"Computed center of mass: {centerOfMass}")
+            print(f"Computed center of mass: {centerOfMass}")
 
 #
 # MyFirstModuleLogic
@@ -286,6 +285,37 @@ class MyFirstModuleLogic(ScriptedLoadableModuleLogic):
     def getParameterNode(self):
         return MyFirstModuleParameterNode(super().getParameterNode())
 
+    
+    def getCenterOfMass(self, markupsNode):
+        if not markupsNode:
+            raise ValueError("Input markups node is invalid")
+
+        numberOfPoints = markupsNode.GetNumberOfControlPoints()
+        if numberOfPoints == 0:
+            raise ValueError("Input markups node must contain at least one point")
+
+        sumPosition = [0.0, 0.0, 0.0]
+        position = [0.0, 0.0, 0.0]
+
+        for pointIndex in range(numberOfPoints):
+            markupsNode.GetNthControlPointPosition(pointIndex, position)
+            sumPosition[0] += position[0]
+            sumPosition[1] += position[1]
+            sumPosition[2] += position[2]
+
+        centerOfMass = [
+            sumPosition[0] / numberOfPoints,
+            sumPosition[1] / numberOfPoints,
+            sumPosition[2] / numberOfPoints,
+        ]
+
+        logging.info(f"Center of mass for {markupsNode.GetName()}: {centerOfMass}")
+        return centerOfMass
+    
+    
+    
+    
+    
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
                 outputVolume: vtkMRMLScalarVolumeNode,
@@ -323,6 +353,9 @@ class MyFirstModuleLogic(ScriptedLoadableModuleLogic):
 
         stopTime = time.time()
         logging.info(f"Processing completed in {stopTime-startTime:.2f} seconds")
+
+    
+    
 
 
 #
