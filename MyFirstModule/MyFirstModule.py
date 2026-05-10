@@ -4,6 +4,7 @@ from typing import Annotated
 
 
 import vtk
+import qt
 
 import slicer
 from slicer.i18n import tr as _
@@ -163,6 +164,16 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.inputSelector.removeEnabled = True
         self.ui.inputSelector.noneEnabled = False
 
+        # Result labels added from Python to keep the UI simple.
+        self.resultFormLayout = qt.QFormLayout()
+
+        self.centerOfMassValueLabel = qt.QLabel("Not computed yet")
+        self.centerOfMassValueLabel.objectName = "centerOfMassValueLabel"
+        self.resultFormLayout.addRow("Center of mass:", self.centerOfMassValueLabel)
+
+        self.layout.addLayout(self.resultFormLayout)
+        
+        
         # Create logic class. Logic implements all computations that should be possible to run
         # in batch mode, without a graphical user interface.
         self.logic = MyFirstModuleLogic()
@@ -175,6 +186,7 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Buttons
         self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+        self.ui.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._checkCanApply)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -237,14 +249,17 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
             self._checkCanApply()
 
+    #para que el boton apply se active cuando haya al menos 1 punto porque no me salia para activar
     def _checkCanApply(self, caller=None, event=None) -> None:
         inputPoints = self.ui.inputSelector.currentNode()
 
         if inputPoints and inputPoints.GetNumberOfControlPoints() > 0:
+            numberOfPoints = inputPoints.GetNumberOfControlPoints()
             self.ui.applyButton.toolTip = _("Compute center of mass")
             self.ui.applyButton.enabled = True
+            logging.info(f"Selected point list '{inputPoints.GetName()}' with {numberOfPoints} points")
         else:
-            self.ui.applyButton.toolTip = _("Select input points")
+            self.ui.applyButton.toolTip = _("Select input point list with at least one point")
             self.ui.applyButton.enabled = False
 
     def onApplyButton(self) -> None:
@@ -257,11 +272,21 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         #     slicer.packaging.load_requirements(self.resourcePath("requirements.txt")),
         #     requester="MyFirstModule",
         # )
-
+        
+        #hacemos el texto bonito con dos decimales y lo mostramos en la etiqueta
         with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
             centerOfMass = self.logic.getCenterOfMass(self.ui.inputSelector.currentNode())
-            logging.info(f"Computed center of mass: {centerOfMass}")
-            print(f"Computed center of mass: {centerOfMass}")
+
+            centerOfMassText = (
+                f"[{centerOfMass[0]:.2f}, "
+                f"{centerOfMass[1]:.2f}, "
+                f"{centerOfMass[2]:.2f}]"
+            )
+
+            self.centerOfMassValueLabel.text = centerOfMassText
+
+            logging.info(f"Computed center of mass: {centerOfMassText}")
+            print(f"Computed center of mass: {centerOfMassText}")
 
 #
 # MyFirstModuleLogic
