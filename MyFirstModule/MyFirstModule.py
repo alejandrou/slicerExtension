@@ -139,6 +139,29 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
 
+    #automaticamente se crean dos puntos de ejemplo para probar el módulo, así no hay que crear un nodo de puntos y agregarle puntos manualmente para probarlo
+    def onCreateDemoPointsButton(self) -> None:
+        """Create two demo markup points in the selected point list."""
+        inputPoints = self.ui.inputSelector.currentNode()
+
+        if not inputPoints:
+            inputPoints = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLMarkupsFiducialNode",
+                "DemoPoints"
+            )
+            self.ui.inputSelector.setCurrentNode(inputPoints)
+
+        inputPoints.RemoveAllControlPoints()
+        inputPoints.AddControlPoint(vtk.vtkVector3d(0, 0, 0), "P1")
+        inputPoints.AddControlPoint(vtk.vtkVector3d(30, 0, 0), "P2")
+
+        logging.info(
+            f"Created {inputPoints.GetNumberOfControlPoints()} demo points "
+            f"in {inputPoints.GetName()}"
+        )
+
+        self._checkCanApply()
+    
     def __init__(self, parent=None) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""
         ScriptedLoadableModuleWidget.__init__(self, parent)
@@ -185,6 +208,10 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.centerOfMassValueLabel.objectName = "centerOfMassValueLabel"
         self.resultFormLayout.addRow("Center of mass:", self.centerOfMassValueLabel)
         
+        self.createDemoPointsButton = qt.QPushButton("Create demo points")
+        self.createDemoPointsButton.toolTip = "Create two sample markup points for testing"
+        self.resultFormLayout.addRow("Demo:", self.createDemoPointsButton)
+        
         self.sphereCenterValueLabel = qt.QLabel("Not computed yet")
         self.sphereCenterValueLabel.objectName = "sphereCenterValueLabel"
         self.resultFormLayout.addRow("Sphere center:", self.sphereCenterValueLabel)
@@ -208,6 +235,7 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Buttons
         self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+        self.createDemoPointsButton.connect("clicked(bool)", self.onCreateDemoPointsButton)
         self.ui.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._checkCanApply)
         self.ui.outputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._checkCanApply)
         
