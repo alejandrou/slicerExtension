@@ -138,29 +138,6 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """Uses ScriptedLoadableModuleWidget base class, available at:
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
-
-    #automaticamente se crean dos puntos de ejemplo para probar el módulo, así no hay que crear un nodo de puntos y agregarle puntos manualmente para probarlo
-    def onCreateDemoPointsButton(self) -> None:
-        """Create two demo markup points in the selected point list."""
-        inputPoints = self.ui.inputSelector.currentNode()
-
-        if not inputPoints:
-            inputPoints = slicer.mrmlScene.AddNewNodeByClass(
-                "vtkMRMLMarkupsFiducialNode",
-                "DemoPoints"
-            )
-            self.ui.inputSelector.setCurrentNode(inputPoints)
-
-        inputPoints.RemoveAllControlPoints()
-        inputPoints.AddControlPoint(vtk.vtkVector3d(0, 0, 0), "P1")
-        inputPoints.AddControlPoint(vtk.vtkVector3d(30, 0, 0), "P2")
-
-        logging.info(
-            f"Created {inputPoints.GetNumberOfControlPoints()} demo points "
-            f"in {inputPoints.GetName()}"
-        )
-
-        self._checkCanApply()
     
     def __init__(self, parent=None) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""
@@ -210,7 +187,7 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         self.createDemoPointsButton = qt.QPushButton("Create demo points")
         self.createDemoPointsButton.toolTip = "Create two sample markup points for testing"
-        self.resultFormLayout.addRow("Demo:", self.createDemoPointsButton)
+        self.ui.inputsCollapsibleButton.layout().addRow("Demo points:", self.createDemoPointsButton)
         
         self.sphereCenterValueLabel = qt.QLabel("Not computed yet")
         self.sphereCenterValueLabel.objectName = "sphereCenterValueLabel"
@@ -301,6 +278,30 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
             self._checkCanApply()
 
+    
+        #automaticamente se crean dos puntos de ejemplo para probar el módulo, así no hay que crear un nodo de puntos y agregarle puntos manualmente para probarlo
+    def onCreateDemoPointsButton(self) -> None:
+        """Create two demo markup points in the selected point list."""
+        inputPoints = self.ui.inputSelector.currentNode()
+
+        if not inputPoints:
+            inputPoints = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLMarkupsFiducialNode",
+                "DemoPoints"
+            )
+            self.ui.inputSelector.setCurrentNode(inputPoints)
+
+        inputPoints.RemoveAllControlPoints()
+        inputPoints.AddControlPoint(vtk.vtkVector3d(0, 0, 0), "P1")
+        inputPoints.AddControlPoint(vtk.vtkVector3d(30, 0, 0), "P2")
+
+        logging.info(
+            f"Created {inputPoints.GetNumberOfControlPoints()} demo points "
+            f"in {inputPoints.GetName()}"
+        )
+
+        self._checkCanApply()
+    
     #para que el boton apply se active cuando haya al menos 1 punto porque no me salia para activar
     ##update: ahora se necesitan dos puntos y un modelo de salida para activar el botón, así que se puede calcular el centro de masa y crear la esfera
     def _checkCanApply(self, caller=None, event=None) -> None:
@@ -322,29 +323,34 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     def onApplyButton(self) -> None:
         """Run processing when user clicks "Apply" button."""
-        # TODO: If your module requires additional Python packages, uncomment
-        # the following lines and add your dependencies to the
-        # Resources/requirements.txt file (one per line, e.g. "scikit-image>=0.20").
-        # import slicer.packaging
-        # slicer.packaging.pip_ensure(
-        #     slicer.packaging.load_requirements(self.resourcePath("requirements.txt")),
-        #     requester="MyFirstModule",
-        # )
-        
-        #hacemos el texto bonito con dos decimales y lo mostramos en la etiqueta
         with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
-            centerOfMass = self.logic.getCenterOfMass(self.ui.inputSelector.currentNode())
+            inputPoints = self.ui.inputSelector.currentNode()
+            outputModel = self.ui.outputSelector.currentNode()
 
+            centerOfMass = self.logic.getCenterOfMass(inputPoints)
             centerOfMassText = (
                 f"[{centerOfMass[0]:.2f}, "
                 f"{centerOfMass[1]:.2f}, "
                 f"{centerOfMass[2]:.2f}]"
             )
-
             self.centerOfMassValueLabel.text = centerOfMassText
 
-            logging.info(f"Computed center of mass: {centerOfMassText}")
-            print(f"Computed center of mass: {centerOfMassText}")
+            sphereCenter, sphereRadius = self.logic.createSphereFromTwoPoints(inputPoints, outputModel)
+
+            sphereCenterText = (
+                f"[{sphereCenter[0]:.2f}, "
+                f"{sphereCenter[1]:.2f}, "
+                f"{sphereCenter[2]:.2f}]"
+            )
+
+            self.sphereCenterValueLabel.text = sphereCenterText
+            self.sphereRadiusValueLabel.text = f"{sphereRadius:.2f} mm"
+
+            logging.info(
+                f"Computed center of mass: {centerOfMassText}; "
+                f"sphere center: {sphereCenterText}; "
+                f"sphere radius: {sphereRadius:.2f} mm"
+            )
 
 #
 # MyFirstModuleLogic
@@ -395,7 +401,52 @@ class MyFirstModuleLogic(ScriptedLoadableModuleLogic):
         logging.info(f"Center of mass for {markupsNode.GetName()}: {centerOfMass}")
         return centerOfMass
     
-    
+    def createSphereFromTwoPoints(self, markupsNode, outputModel):
+  
+        if not markupsNode:
+            raise ValueError("Input markups node is invalid")
+
+        if not outputModel:
+            raise ValueError("Output model node is invalid")
+
+        if markupsNode.GetNumberOfControlPoints() < 2:
+            raise ValueError("At least two markup points are required")
+
+        center = [0.0, 0.0, 0.0]
+        surfacePoint = [0.0, 0.0, 0.0]
+
+        markupsNode.GetNthControlPointPosition(0, center)
+        markupsNode.GetNthControlPointPosition(1, surfacePoint)
+
+        dx = surfacePoint[0] - center[0]
+        dy = surfacePoint[1] - center[1]
+        dz = surfacePoint[2] - center[2]
+        radius = (dx * dx + dy * dy + dz * dz) ** 0.5
+
+        if radius <= 0:
+            raise ValueError("The two markup points must not be in the same position")
+
+        sphereSource = vtk.vtkSphereSource()
+        sphereSource.SetCenter(center[0], center[1], center[2])
+        sphereSource.SetRadius(radius)
+        sphereSource.SetThetaResolution(64)
+        sphereSource.SetPhiResolution(64)
+        sphereSource.Update()
+
+        outputModel.SetAndObservePolyData(sphereSource.GetOutput())
+        outputModel.CreateDefaultDisplayNodes()
+
+        displayNode = outputModel.GetDisplayNode()
+        if displayNode:
+            displayNode.SetSliceIntersectionVisibility(True)
+            displayNode.SetOpacity(0.5)
+
+        logging.info(
+            f"Sphere created. Center: {center}, "
+            f"surface point: {surfacePoint}, radius: {radius:.2f}"
+        )
+
+        return center, radius
     
     
     
