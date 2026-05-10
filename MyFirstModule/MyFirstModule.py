@@ -464,15 +464,6 @@ class MyFirstModuleLogic(ScriptedLoadableModuleLogic):
     
     def createSphereFromTwoPoints(self, markupsNode, outputModel):
 
-        if not markupsNode:
-            raise ValueError("Input markups node is invalid")
-
-        if not outputModel:
-            raise ValueError("Output model node is invalid")
-
-        if markupsNode.GetNumberOfControlPoints() < 2:
-            raise ValueError("At least two markup points are required")
-
         center = [0.0, 0.0, 0.0]
         surfacePoint = [0.0, 0.0, 0.0]
 
@@ -483,10 +474,7 @@ class MyFirstModuleLogic(ScriptedLoadableModuleLogic):
         dy = surfacePoint[1] - center[1]
         dz = surfacePoint[2] - center[2]
         radius = (dx * dx + dy * dy + dz * dz) ** 0.5
-
-        if radius <= 0:
-            raise ValueError("The two markup points must not be in the same position")
-
+        
         sphereSource = vtk.vtkSphereSource()
         sphereSource.SetCenter(center[0], center[1], center[2])
         sphereSource.SetRadius(radius)
@@ -508,8 +496,6 @@ class MyFirstModuleLogic(ScriptedLoadableModuleLogic):
         )
 
         return center, radius
-    
-    
     
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
