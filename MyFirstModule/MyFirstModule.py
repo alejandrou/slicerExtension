@@ -16,7 +16,7 @@ from slicer.parameterNodeWrapper import (
     WithinRange,
 )
 
-from slicer import vtkMRMLScalarVolumeNode, vtkMRMLMarkupsFiducialNode
+from slicer import vtkMRMLScalarVolumeNode, vtkMRMLMarkupsFiducialNode, vtkMRMLModelNode
 
 
 #
@@ -120,6 +120,9 @@ class MyFirstModuleParameterNode:
     """
 
     inputVolume: vtkMRMLMarkupsFiducialNode
+    #nodo donde se guarda la esfera
+    outputModel: vtkMRMLModelNode
+
     imageThreshold: Annotated[float, WithinRange(-100, 500)] = 100
     invertThreshold: bool = False
     thresholdedVolume: vtkMRMLScalarVolumeNode
@@ -158,11 +161,15 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
         # "setMRMLScene(vtkMRMLScene*)" slot.
         uiWidget.setMRMLScene(slicer.mrmlScene)
-        self.ui.inputSelector.nodeTypes = ["vtkMRMLMarkupsFiducialNode"]
-        self.ui.inputSelector.selectNodeUponCreation = True
-        self.ui.inputSelector.addEnabled = True
-        self.ui.inputSelector.removeEnabled = True
-        self.ui.inputSelector.noneEnabled = False
+        
+        self.ui.outputSelector.setProperty("SlicerParameterName", "outputModel")
+        self.ui.outputSelector.nodeTypes = ["vtkMRMLModelNode"]
+        self.ui.outputSelector.selectNodeUponCreation = True
+        self.ui.outputSelector.addEnabled = True
+        self.ui.outputSelector.removeEnabled = True
+        self.ui.outputSelector.renameEnabled = True
+        self.ui.outputSelector.noneEnabled = False
+        self.ui.outputSelector.baseName = "SphereModel"
 
         # Result labels added from Python to keep the UI simple.
         self.resultFormLayout = qt.QFormLayout()
@@ -170,6 +177,14 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.centerOfMassValueLabel = qt.QLabel("Not computed yet")
         self.centerOfMassValueLabel.objectName = "centerOfMassValueLabel"
         self.resultFormLayout.addRow("Center of mass:", self.centerOfMassValueLabel)
+        
+        self.sphereCenterValueLabel = qt.QLabel("Not computed yet")
+        self.sphereCenterValueLabel.objectName = "sphereCenterValueLabel"
+        self.resultFormLayout.addRow("Sphere center:", self.sphereCenterValueLabel)
+
+        self.sphereRadiusValueLabel = qt.QLabel("Not computed yet")
+        self.sphereRadiusValueLabel.objectName = "sphereRadiusValueLabel"
+        self.resultFormLayout.addRow("Sphere radius:", self.sphereRadiusValueLabel)
 
         self.layout.addLayout(self.resultFormLayout)
         
@@ -187,6 +202,8 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Buttons
         self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
         self.ui.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._checkCanApply)
+        self.ui.outputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._checkCanApply)
+        
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -250,17 +267,23 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self._checkCanApply()
 
     #para que el boton apply se active cuando haya al menos 1 punto porque no me salia para activar
+    ##update: ahora se necesitan dos puntos y un modelo de salida para activar el botón, así que se puede calcular el centro de masa y crear la esfera
     def _checkCanApply(self, caller=None, event=None) -> None:
         inputPoints = self.ui.inputSelector.currentNode()
+        outputModel = self.ui.outputSelector.currentNode()
 
-        if inputPoints and inputPoints.GetNumberOfControlPoints() > 0:
-            numberOfPoints = inputPoints.GetNumberOfControlPoints()
-            self.ui.applyButton.toolTip = _("Compute center of mass")
-            self.ui.applyButton.enabled = True
-            logging.info(f"Selected point list '{inputPoints.GetName()}' with {numberOfPoints} points")
-        else:
-            self.ui.applyButton.toolTip = _("Select input point list with at least one point")
+        if not inputPoints:
+            self.ui.applyButton.toolTip = _("Select input points")
             self.ui.applyButton.enabled = False
+        elif inputPoints.GetNumberOfControlPoints() < 2:
+            self.ui.applyButton.toolTip = _("Add at least two markup points")
+            self.ui.applyButton.enabled = False
+        elif not outputModel:
+            self.ui.applyButton.toolTip = _("Select or create an output model")
+            self.ui.applyButton.enabled = False
+        else:
+            self.ui.applyButton.toolTip = _("Compute center of mass and create sphere")
+            self.ui.applyButton.enabled = True
 
     def onApplyButton(self) -> None:
         """Run processing when user clicks "Apply" button."""
