@@ -146,7 +146,9 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.logic = None
         self._parameterNode = None
         self._parameterNodeGuiTag = None
-
+        self.observedMarkupNode = None
+        self._markupsObserverTag = None
+        
     def setup(self) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""
         ScriptedLoadableModuleWidget.setup(self)
@@ -189,6 +191,10 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.createDemoPointsButton.toolTip = "Create two sample markup points for testing"
         self.ui.inputsCollapsibleButton.layout().addRow("Demo points:", self.createDemoPointsButton)
         
+        self.autoUpdateCheckBox = qt.QCheckBox()
+        self.autoUpdateCheckBox.toolTip = "Automatically update the sphere when points move"
+        self.resultFormLayout.addRow("Auto-update:", self.autoUpdateCheckBox)
+        
         self.sphereCenterValueLabel = qt.QLabel("Not computed yet")
         self.sphereCenterValueLabel.objectName = "sphereCenterValueLabel"
         self.resultFormLayout.addRow("Sphere center:", self.sphereCenterValueLabel)
@@ -213,15 +219,22 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Buttons
         self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
         self.createDemoPointsButton.connect("clicked(bool)", self.onCreateDemoPointsButton)
-        self.ui.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._checkCanApply)
+        # self.ui.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._checkCanApply)
+        self.ui.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onInputNodeChanged)
         self.ui.outputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._checkCanApply)
-        
+        self.autoUpdateCheckBox.connect("toggled(bool)", self.onEnableAutoUpdate)
+    
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
 
     def cleanup(self) -> None:
         """Called when the application closes and the module widget is destroyed."""
+        if self._markupsObserverTag and self.observedMarkupNode:
+            self.observedMarkupNode.RemoveObserver(self._markupsObserverTag)
+            self._markupsObserverTag = None
+            self.observedMarkupNode = None
+
         self.removeObservers()
 
     def enter(self) -> None:
@@ -281,7 +294,7 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     
         #automaticamente se crean dos puntos de ejemplo para probar el módulo, así no hay que crear un nodo de puntos y agregarle puntos manualmente para probarlo
     def onCreateDemoPointsButton(self) -> None:
-        """Create two demo markup points in the selected point list."""
+
         inputPoints = self.ui.inputSelector.currentNode()
 
         if not inputPoints:
@@ -292,15 +305,60 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.ui.inputSelector.setCurrentNode(inputPoints)
 
         inputPoints.RemoveAllControlPoints()
-        inputPoints.AddControlPoint(vtk.vtkVector3d(0, 0, 0), "P1")
-        inputPoints.AddControlPoint(vtk.vtkVector3d(30, 0, 0), "P2")
+        inputPoints.AddControlPoint(vtk.vtkVector3d(0, 0, 0), "Center")
+        inputPoints.AddControlPoint(vtk.vtkVector3d(30, 0, 0), "Surface")
+
+        outputModel = self.ui.outputSelector.currentNode()
+        if not outputModel:
+            outputModel = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLModelNode",
+                "SphereModel"
+            )
+            self.ui.outputSelector.setCurrentNode(outputModel)
 
         logging.info(
-            f"Created {inputPoints.GetNumberOfControlPoints()} demo points "
-            f"in {inputPoints.GetName()}"
+            f"Created demo input '{inputPoints.GetName()}' with "
+            f"{inputPoints.GetNumberOfControlPoints()} points and output model "
+            f"'{outputModel.GetName()}'"
         )
 
         self._checkCanApply()
+        
+        if self.autoUpdateCheckBox.checked:
+            self.onEnableAutoUpdate(True)
+        
+        
+    def onInputNodeChanged(self, caller=None, event=None) -> None:
+        """Called when the selected input node changes."""
+        self._checkCanApply()
+
+        if self.autoUpdateCheckBox.checked:
+            self.onEnableAutoUpdate(True)
+
+
+    def onEnableAutoUpdate(self, autoUpdate: bool) -> None:
+        """Enable or disable automatic updates when markup points change."""
+        if self._markupsObserverTag and self.observedMarkupNode:
+            self.observedMarkupNode.RemoveObserver(self._markupsObserverTag)
+            self.observedMarkupNode = None
+            self._markupsObserverTag = None
+
+        if autoUpdate:
+            inputPoints = self.ui.inputSelector.currentNode()
+            if inputPoints:
+                self.observedMarkupNode = inputPoints
+                self._markupsObserverTag = self.observedMarkupNode.AddObserver(
+                    slicer.vtkMRMLMarkupsNode.PointModifiedEvent,
+                    self.onMarkupsUpdated
+                )
+
+
+    def onMarkupsUpdated(self, caller=None, event=None) -> None:
+        """Recompute the result when markup points are moved."""
+        self._checkCanApply()
+        if self.ui.applyButton.enabled:
+            self.onApplyButton() 
+    
     
     #para que el boton apply se active cuando haya al menos 1 punto porque no me salia para activar
     ##update: ahora se necesitan dos puntos y un modelo de salida para activar el botón, así que se puede calcular el centro de masa y crear la esfera
@@ -335,7 +393,10 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             )
             self.centerOfMassValueLabel.text = centerOfMassText
 
-            sphereCenter, sphereRadius = self.logic.createSphereFromTwoPoints(inputPoints, outputModel)
+            sphereCenter, sphereRadius = self.logic.createSphereFromTwoPoints(
+                inputPoints,
+                outputModel
+            )
 
             sphereCenterText = (
                 f"[{sphereCenter[0]:.2f}, "
@@ -347,9 +408,9 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.sphereRadiusValueLabel.text = f"{sphereRadius:.2f} mm"
 
             logging.info(
-                f"Computed center of mass: {centerOfMassText}; "
-                f"sphere center: {sphereCenterText}; "
-                f"sphere radius: {sphereRadius:.2f} mm"
+                f"Center of mass: {centerOfMassText}; "
+                f"Sphere center: {sphereCenterText}; "
+                f"Sphere radius: {sphereRadius:.2f} mm"
             )
 
 #
@@ -402,7 +463,7 @@ class MyFirstModuleLogic(ScriptedLoadableModuleLogic):
         return centerOfMass
     
     def createSphereFromTwoPoints(self, markupsNode, outputModel):
-  
+
         if not markupsNode:
             raise ValueError("Input markups node is invalid")
 
