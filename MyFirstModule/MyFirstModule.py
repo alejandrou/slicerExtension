@@ -162,6 +162,13 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # "setMRMLScene(vtkMRMLScene*)" slot.
         uiWidget.setMRMLScene(slicer.mrmlScene)
         
+        self.ui.inputSelector.setProperty("SlicerParameterName", "inputVolume")
+        self.ui.inputSelector.nodeTypes = ["vtkMRMLMarkupsFiducialNode"]
+        self.ui.inputSelector.selectNodeUponCreation = True
+        self.ui.inputSelector.addEnabled = True
+        self.ui.inputSelector.removeEnabled = True
+        self.ui.inputSelector.noneEnabled = False
+                
         self.ui.outputSelector.setProperty("SlicerParameterName", "outputModel")
         self.ui.outputSelector.nodeTypes = ["vtkMRMLModelNode"]
         self.ui.outputSelector.selectNodeUponCreation = True
